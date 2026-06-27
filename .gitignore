@@ -1,0 +1,15 @@
+#dependcies
+node_modules/
+venv/
+env/
+
+#python cache
+--pychace__
+*.pyc
+.env
+.venv
+*.mp4
+*.raw
+test1/
+test_caption.py
+workflow-files.zip

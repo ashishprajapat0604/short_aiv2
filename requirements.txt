@@ -1,0 +1,33 @@
+# ─────────────────────────────────────────────────────────────
+# ShortsAI — Python dependencies
+# Install with:  pip install -r requirements.txt
+# (Python 3.10+ recommended)
+# ─────────────────────────────────────────────────────────────
+
+# Web server / API
+fastapi>=0.110
+uvicorn[standard]>=0.27       # ASGI server — run with: uvicorn app:app
+python-multipart>=0.0.9       # REQUIRED by FastAPI for file uploads + form fields
+pydantic>=2.5                 # (pulled in by FastAPI; pinned for clarity)
+
+# Config
+python-dotenv>=1.0            # loads GROQ_API_KEY / DEEPGRAM_API_KEY from .env
+
+# AI / transcription APIs
+groq>=0.11                    # Whisper transcription + translation/transliteration/titles
+deepgram-sdk>=3.7             # per-clip transcription (nova-3); optional at runtime
+
+# Video download
+yt-dlp>=2024.4.9              # YouTube / generic URL downloads (invoked as a CLI)
+gdown>=5.1                    # Google Drive link downloads
+
+# Optional — used only to auto-scale parallel render workers by free RAM.
+# If absent, the pipeline falls back to 2 workers. Safe to remove.
+psutil>=5.9
+
+# ─────────────────────────────────────────────────────────────
+# NOT installable via pip — must be present on the system:
+#   • ffmpeg + ffprobe   (cutting, scaling to 9:16, burning subtitles)
+#   • A Devanagari font  (e.g. NotoSansDevanagari-Bold.ttf) for Hindi / dual
+#                         captions — place it under ./fonts/  (see README)
+# ─────────────────────────────────────────────────────────────
