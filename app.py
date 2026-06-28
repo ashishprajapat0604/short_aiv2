@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import json
 import shutil
@@ -7,11 +10,9 @@ from typing import Optional
 from uuid import uuid4
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from pydantic import BaseModel  
+from pydantic import BaseModel
 import select_clips
 import burn_subtitles
-from dotenv import load_dotenv
-load_dotenv()
 
 
 
