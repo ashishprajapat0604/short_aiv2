@@ -366,6 +366,10 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
       <label class="opt on" id="tog-key" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Key insights</div><div class="oss">The most useful takeaways</div></div></label>
       <label class="opt" id="tog-trend" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Trend-friendly</div><div class="oss">Topical &amp; shareable</div></div></label>
     </div>
+    <div class="opt-grid" style="margin-top:12px">
+      <label class="opt on" id="mode-multi" onclick="setClipMode('multi')"><div class="toggle-box"></div><div><div class="ot">Multi-clip mode</div><div class="oss">More clips · ~1 per minute · 20–40s each</div></div></label>
+      <label class="opt" id="mode-best" onclick="setClipMode('best')"><div class="toggle-box"></div><div><div class="ot">Best moments mode</div><div class="oss">Fewer, stronger · half as many · 40–60s each</div></div></label>
+    </div>
     <div class="stepper">
       <span class="sl">Number of clips</span>
       <div class="step-ctrl" id="clipStepper" data-disabled="1">
@@ -530,7 +534,7 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 <script>
 // ── State ──
 let currentMode='online', currentJobId=null;
-let autoClips=true, clipCount=15, autoDelete=false;
+let autoClips=true, clipCount=15, autoDelete=false, clipMode='multi';
 let capBurn=true, capLayout='single', capLang='hindi', capPos='bottom', capStyle='outline', capAccent='#FFE600';
 let hindiFont='noto', englishFont='poppins';
 let videoQuality='best';
@@ -695,6 +699,15 @@ function renderPreview(){
   document.getElementById('previewCap').textContent = capBurn ? captionSummary(getOptions()) : 'Captions off — clean 9:16 clips';
 }
 
+// ── Clip mode (multi = many short clips · best = fewer longer highlights) ──
+function setClipMode(m){
+  clipMode=(m==='best')?'best':'multi';
+  document.getElementById('mode-multi').classList.toggle('on', clipMode==='multi');
+  document.getElementById('mode-best').classList.toggle('on', clipMode==='best');
+  const autoLbl=document.querySelector('#autoClipsToggle span');
+  if(autoLbl) autoLbl.textContent = clipMode==='best' ? 'Auto (best ~1 per 2 min)' : 'Auto (1 per minute)';
+}
+
 // ── Clip count ──
 function toggleAutoClips(el){
   el.classList.toggle('on'); autoClips=el.classList.contains('on');
@@ -721,6 +734,7 @@ function getOptions(){
     key:document.getElementById('tog-key').classList.contains('on'),
     trend:document.getElementById('tog-trend').classList.contains('on'),
     num_clips:autoClips?'auto':clipCount,
+    clip_mode:clipMode,
     min_clip_len:20, max_clip_len:40,
     burn_subtitles:capBurn,
     subtitle_layout:capLayout,

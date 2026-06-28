@@ -8,6 +8,7 @@ import traceback
 import datetime
 import gdown
 from groq import Groq
+import providers
 
 # ─────────────────────────────────────────────────────────────
 # Diagnostic Logger
@@ -139,10 +140,13 @@ def extract_audio(video_path: str, output_path: str, log: DiagnosticLog) -> str:
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video not found: {video_path}")
 
+    # 16 kHz mono is the native sample rate every ASR engine (Whisper/Deepgram)
+    # resamples to anyway — extracting at 16 kHz makes a much smaller file, so the
+    # ffmpeg encode is faster AND the upload to the transcription API is far quicker.
     command = [
         "ffmpeg", "-y",
         "-i", video_path,
-        "-vn", "-ar", "44100", "-ac", "1", "-ab", "64k", "-f", "mp3",
+        "-vn", "-ar", "16000", "-ac", "1", "-b:a", "32k", "-f", "mp3",
         output_path,
     ]
     result = subprocess.run(command, capture_output=True, text=True)
@@ -250,37 +254,26 @@ def _groq_transcribe_with_retry(client, audio_bytes: bytes, filename: str, log: 
 
 
 def transcribe_full_video(audio_path: str, job_dir: str, log: DiagnosticLog) -> str:
-    """Transcribe the full video with Groq Whisper for AI highlight selection.
-    Tries whisper-large-v3 (better Hindi) with retries, then falls back to
-    whisper-large-v3-turbo if the full model keeps erroring."""
-    log.log("[Step 3] Transcribing full video with Groq Whisper (for highlight selection)...")
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        raise ValueError("GROQ_API_KEY is missing from environment!")
+    """Transcribe the full video for AI highlight selection AND subtitle slicing.
 
-    client = Groq(api_key=api_key)
+    ROBUST: tries a full provider chain so a single outage never sinks a job —
+        1. Groq Whisper (whisper-large-v3 -> turbo, with retries)
+        2. Deepgram nova-3
+        3. local faster-whisper (offline; never rate-limits — ideal on a GPU box)
+    Order is configurable via env TRANSCRIBE_ORDER. See providers.transcribe_audio.
+    """
+    log.log("[Step 3] Transcribing full video (robust multi-provider) for highlight selection...")
 
-    with open(audio_path, "rb") as f:
-        audio_bytes = f.read()
-    transcription = _groq_transcribe_with_retry(
-        client, audio_bytes, os.path.basename(audio_path), log
-    )
+    data = providers.transcribe_audio(audio_path, language="hi", log=log)
+    if not data or not data.get("segments"):
+        raise RuntimeError(
+            "All transcription providers failed (Groq / Deepgram / local Whisper). "
+            "Check API keys, network, or install faster-whisper for an offline fallback."
+        )
 
-    data = json.loads(transcription.model_dump_json())
     segments = data.get("segments", [])
-    top_words = data.get("words", [])
-
-    # Map root level word timestamps into segments if nested words list is missing
-    if top_words and segments and "words" not in segments[0]:
-        for seg in segments:
-            seg["words"] = []
-        for w in top_words:
-            for seg in segments:
-                if seg["start"] <= w["start"] <= seg["end"]:
-                    seg["words"].append(w)
-                    break
-
     words_total = sum(len(s.get("words", [])) for s in segments)
+    log.log(f"  Transcription engine used: {data.get('_engine', 'unknown')}")
 
     log.section("FULL TRANSCRIPTION RESULT")
     log.log(f"  Total segments : {len(segments)}")
@@ -528,40 +521,33 @@ def _chunk_segments(segments: list, budget_chars: int) -> list:
 
 
 def _call_selection_llm(client, prompt: str, log: DiagnosticLog):
-    """Single LLM call with model fallback + light retry. Returns parsed list or []."""
-    import time
-    for model in [SELECTION_MODEL_PRIMARY, SELECTION_MODEL_FALLBACK]:
-        for attempt in range(1, 3):
-            try:
-                resp = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2,
-                    response_format={"type": "json_object"},
-                )
-                raw = resp.choices[0].message.content.strip()
-                parsed = json.loads(raw)
-                hl = parsed.get("highlights", parsed) if isinstance(parsed, dict) else parsed
-                return hl if isinstance(hl, list) else []
-            except Exception as e:
-                status = getattr(e, "status_code", None)
-                if status in (400, 401, 403, 404):
-                    log.log(f"    selection model {model}: non-retryable error {status}: {e}")
-                    break
-                log.log(f"    selection model {model} attempt {attempt} failed: {e}")
-                time.sleep(2 * attempt)
-    return []
+    """Single LLM call with full provider fallback (Groq models -> Gemini).
+    Returns parsed list or []."""
+    raw = providers.chat(
+        prompt, temperature=0.2, json_mode=True, log=log,
+        groq_models=[SELECTION_MODEL_PRIMARY, SELECTION_MODEL_FALLBACK],
+    )
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        hl = parsed.get("highlights", parsed) if isinstance(parsed, dict) else parsed
+        return hl if isinstance(hl, list) else []
+    except Exception as e:
+        log.log(f"    selection: could not parse LLM JSON: {e}")
+        return []
 
 
 def select_highlights_chunked(segments: list, num_clips: int, per_chunk: int,
                               log: DiagnosticLog) -> list:
     """Run the LLM selector across transcript chunks and merge the picks.
     Returns a list of raw {start, end, score, reason} (un-snapped)."""
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key or not segments:
+    have_any_llm = bool(os.environ.get("GROQ_API_KEY") or os.environ.get("GEMINI_API_KEY")
+                        or os.environ.get("GOOGLE_API_KEY"))
+    if not have_any_llm or not segments:
         return []
 
-    client = Groq(api_key=api_key)
+    client = None  # providers.chat manages its own clients/fallback
     chunks = _chunk_segments(segments, SELECTION_CHUNK_CHARS)
     log.log(f"  AI selection: {len(segments)} segments -> {len(chunks)} chunk(s) "
             f"(model={SELECTION_MODEL_PRIMARY}, ~{SELECTION_CHUNK_CHARS} chars/chunk, "
@@ -613,12 +599,23 @@ def get_ai_highlights(transcript_path: str, job_dir: str, log: DiagnosticLog,
     minutes = max(1, round(total_duration / 60.0))
     log.log(f"  Total video duration: {total_duration:.2f}s (~{minutes} min)")
 
+    # ── Clip mode ──────────────────────────────────────────────────────────────
+    #   "multi" (default) — maximise coverage: ~1 clip per minute, each 20-40s.
+    #   "best"            — quality over quantity: only the most interesting
+    #                       ~half-as-many moments, each a longer 40-60s clip.
+    clip_mode = str(options.get("clip_mode", "multi")).lower()
+    if clip_mode not in ("multi", "best"):
+        clip_mode = "multi"
+    log.log(f"  Clip mode: {clip_mode}")
+
     # How many clips to produce:
     #   - "auto" (default): one clip per minute of video (15-min video -> ~15 clips).
-    #   - an explicit number: used directly, but never more than minutes (1/min cap).
-    # Clips are kept relatively non-overlapping; the 1/min cap keeps Deepgram cost
-    # (which runs per selected clip later) proportional to the video length.
-    max_for_video = max(1, min(minutes, _ABS_MAX_CLIPS))
+    #     In "best" mode this halves to the strongest moments only.
+    #   - an explicit number: used directly, but never more than the per-mode cap.
+    if clip_mode == "best":
+        max_for_video = max(1, min(math.ceil(minutes / 2), _ABS_MAX_CLIPS))
+    else:
+        max_for_video = max(1, min(minutes, _ABS_MAX_CLIPS))
     raw_nc = options.get("num_clips", "auto")
     auto_mode = bool(options.get("auto_clips")) or str(raw_nc).strip().lower() in ("", "auto", "0", "none")
     if auto_mode:
@@ -634,17 +631,23 @@ def get_ai_highlights(transcript_path: str, job_dir: str, log: DiagnosticLog,
     log.log(f"  Target clips: {num_clips} ({'auto' if auto_mode else 'manual'}, max {max_for_video} = 1/min) | "
             f"AI picks first, coverage fills remainder")
 
-    # Per-clip length bounds (client requirement: 20s-40s by default).
-    try:
-        min_len = float(options.get("min_clip_len", DEFAULT_MIN_CLIP_LEN))
-    except (TypeError, ValueError):
-        min_len = DEFAULT_MIN_CLIP_LEN
-    try:
-        max_len = float(options.get("max_clip_len", DEFAULT_MAX_CLIP_LEN))
-    except (TypeError, ValueError):
-        max_len = DEFAULT_MAX_CLIP_LEN
-    if max_len <= min_len:
-        min_len, max_len = DEFAULT_MIN_CLIP_LEN, DEFAULT_MAX_CLIP_LEN
+    # Per-clip length bounds.
+    #   "best" mode pins clips to a longer 40-60s window (the mode defines the length,
+    #   so it wins over any caller-sent bounds). "multi" uses the 20-40s default
+    #   (overridable via min_clip_len / max_clip_len).
+    if clip_mode == "best":
+        min_len, max_len = 40.0, 60.0
+    else:
+        try:
+            min_len = float(options.get("min_clip_len", DEFAULT_MIN_CLIP_LEN))
+        except (TypeError, ValueError):
+            min_len = DEFAULT_MIN_CLIP_LEN
+        try:
+            max_len = float(options.get("max_clip_len", DEFAULT_MAX_CLIP_LEN))
+        except (TypeError, ValueError):
+            max_len = DEFAULT_MAX_CLIP_LEN
+        if max_len <= min_len:
+            min_len, max_len = DEFAULT_MIN_CLIP_LEN, DEFAULT_MAX_CLIP_LEN
     log.log(f"  Clip length bounds: {min_len:.0f}s min / {max_len:.0f}s max")
 
     valid = []
@@ -806,7 +809,9 @@ def execute_selection_workflow(
     if options is None:
         options = {"viral": True, "emotional": True, "key": True, "trend": False, "num_clips": 3}
     options.setdefault("num_clips", 3)
-    # Clip-length bounds (client requirement: 20-40s).
+    # Clip selection mode: "multi" (~1 clip/min, 20-40s) or "best" (~n/2 clips, 40-60s).
+    options.setdefault("clip_mode", "multi")
+    # Clip-length bounds (used by "multi" mode; "best" mode pins 40-60s internally).
     options.setdefault("min_clip_len", DEFAULT_MIN_CLIP_LEN)
     options.setdefault("max_clip_len", DEFAULT_MAX_CLIP_LEN)
     # Subtitle/caption preferences — these don't affect selection, but we persist

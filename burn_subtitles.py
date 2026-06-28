@@ -12,6 +12,7 @@ import argparse
 from groq import Groq
 # Note: PrerecordedOptions is removed in Deepgram SDK v5.0.0+
 from deepgram import DeepgramClient
+import providers
 
 # ─────────────────────────────────────────────────────────────
 # Diagnostic Logger
@@ -318,12 +319,6 @@ def _translate_texts(texts: list, log: DiagnosticLog) -> list:
     if not texts:
         return out
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        log.log("  Skipping translation: GROQ_API_KEY missing (English track will be blank)")
-        return out
-
-    client = Groq(api_key=api_key)
     bulk_text = "\n".join(f"{i}:: {t}" for i, t in enumerate(texts))
 
     prompt = """You are an expert Hindi-to-English translator for video subtitles.
@@ -335,31 +330,24 @@ CRITICAL RULES:
 4. Keep each translation concise enough to read as a subtitle (it must fit on screen).
 TEXT:\n""" + bulk_text
 
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        raw_content = response.choices[0].message.content.strip()
-        raw_content = re.sub(r"```[a-zA-Z]*\n", "", raw_content)
-        raw_content = raw_content.replace("`" * 3, "")
-
-        for line in raw_content.split("\n"):
-            if not line.strip() or "::" not in line:
+    raw_content = providers.chat(prompt, temperature=0.2, log=log)
+    if not raw_content:
+        log.log("  Translation unavailable (all providers failed) — English track will be blank")
+        return out
+    raw_content = re.sub(r"```[a-zA-Z]*\n", "", raw_content).replace("`" * 3, "")
+    for line in raw_content.split("\n"):
+        if not line.strip() or "::" not in line:
+            continue
+        try:
+            parts = line.split("::", 1)
+            idx_match = re.search(r"\d+", parts[0].strip())
+            if not idx_match:
                 continue
-            try:
-                parts = line.split("::", 1)
-                idx_match = re.search(r"\d+", parts[0].strip())
-                if not idx_match:
-                    continue
-                idx = int(idx_match.group())
-                if 0 <= idx < len(out):
-                    out[idx] = parts[1].strip()
-            except Exception:
-                continue
-    except Exception as e:
-        log.error(f"Translation failed: {e}", e)
+            idx = int(idx_match.group())
+            if 0 <= idx < len(out):
+                out[idx] = parts[1].strip()
+        except Exception:
+            continue
     return out
 
 
@@ -403,12 +391,6 @@ def _transliterate_texts(texts: list, log: DiagnosticLog) -> list:
     if not texts:
         return out
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        log.log("  Skipping transliteration: GROQ_API_KEY missing (Hinglish track will be blank)")
-        return out
-
-    client = Groq(api_key=api_key)
     bulk_text = "\n".join(f"{i}:: {t}" for i, t in enumerate(texts))
 
     prompt = """You are an expert at writing Hinglish subtitles.
@@ -421,31 +403,24 @@ CRITICAL RULES:
 4. Keep common English words that appear as English. Use everyday, readable spelling (no accents/diacritics).
 TEXT:\n""" + bulk_text
 
-    try:
-        response = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2,
-        )
-        raw_content = response.choices[0].message.content.strip()
-        raw_content = re.sub(r"```[a-zA-Z]*\n", "", raw_content)
-        raw_content = raw_content.replace("`" * 3, "")
-
-        for line in raw_content.split("\n"):
-            if not line.strip() or "::" not in line:
+    raw_content = providers.chat(prompt, temperature=0.2, log=log)
+    if not raw_content:
+        log.log("  Transliteration unavailable (all providers failed) — Hinglish track will be blank")
+        return out
+    raw_content = re.sub(r"```[a-zA-Z]*\n", "", raw_content).replace("`" * 3, "")
+    for line in raw_content.split("\n"):
+        if not line.strip() or "::" not in line:
+            continue
+        try:
+            parts = line.split("::", 1)
+            idx_match = re.search(r"\d+", parts[0].strip())
+            if not idx_match:
                 continue
-            try:
-                parts = line.split("::", 1)
-                idx_match = re.search(r"\d+", parts[0].strip())
-                if not idx_match:
-                    continue
-                idx = int(idx_match.group())
-                if 0 <= idx < len(out):
-                    out[idx] = parts[1].strip()
-            except Exception:
-                continue
-    except Exception as e:
-        log.error(f"Transliteration failed: {e}", e)
+            idx = int(idx_match.group())
+            if 0 <= idx < len(out):
+                out[idx] = parts[1].strip()
+        except Exception:
+            continue
     return out
 
 
@@ -481,11 +456,6 @@ def batch_generate_titles(clips_segments: list, log: DiagnosticLog) -> list:
     log.section("BATCH TITLE GENERATION (all clips, one call)")
     titles = ["" for _ in clips_segments]
 
-    api_key = os.environ.get("GROQ_API_KEY")
-    if not api_key:
-        log.log("  Skipping titles: GROQ_API_KEY missing")
-        return titles
-
     # Build a compact prompt: one numbered block of Hindi text per clip.
     blocks = []
     for ci, segs in enumerate(clips_segments):
@@ -503,31 +473,25 @@ punchy on-screen TITLE that would make someone stop scrolling. Rules:
 4. Output exactly one line per clip, same order.
 CLIPS:\n""" + bulk
 
-    try:
-        client = Groq(api_key=api_key)
-        resp = client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.6,
-        )
-        raw = resp.choices[0].message.content.strip()
-        raw = re.sub(r"```[a-zA-Z]*\n", "", raw).replace("`" * 3, "")
-        for line in raw.split("\n"):
-            if "::" not in line:
+    raw = providers.chat(prompt, temperature=0.6, log=log)
+    if not raw:
+        log.log("  Title generation unavailable (all providers failed) — no titles")
+        return titles
+    raw = re.sub(r"```[a-zA-Z]*\n", "", raw).replace("`" * 3, "")
+    for line in raw.split("\n"):
+        if "::" not in line:
+            continue
+        try:
+            pfx, val = line.split("::", 1)
+            m = re.search(r"\d+", pfx)
+            if not m:
                 continue
-            try:
-                pfx, val = line.split("::", 1)
-                m = re.search(r"\d+", pfx)
-                if not m:
-                    continue
-                idx = int(m.group())
-                if 0 <= idx < len(titles):
-                    titles[idx] = val.strip().strip('"').strip()
-            except Exception:
-                continue
-        log.log(f"  Generated {sum(1 for t in titles if t)}/{len(titles)} titles.")
-    except Exception as e:
-        log.error(f"Title generation failed: {e}", e)
+            idx = int(m.group())
+            if 0 <= idx < len(titles):
+                titles[idx] = val.strip().strip('"').strip()
+        except Exception:
+            continue
+    log.log(f"  Generated {sum(1 for t in titles if t)}/{len(titles)} titles.")
     return titles
 
 
@@ -1080,8 +1044,11 @@ def _build_render_filter(ass_path: str, fontsdir: str = "") -> str:
     `fontsdir` should point at the bundled Devanagari font folder; the Latin font
     (Poppins) is resolved from system fonts via fontconfig.
     """
+    # bilinear downscaling is noticeably cheaper than the default bicubic with
+    # negligible quality loss at this resolution; override with SCALE_FLAGS if needed.
+    scale_flags = os.environ.get("SCALE_FLAGS", "bilinear")
     chain = [
-        f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=decrease",
+        f"scale={SHORTS_W}:{SHORTS_H}:force_original_aspect_ratio=decrease:flags={scale_flags}",
         f"pad={SHORTS_W}:{SHORTS_H}:(ow-iw)/2:(oh-ih)/2:color=black",
         "setsar=1",
     ]
@@ -1232,7 +1199,8 @@ def burn_subtitles_for_clip(raw_path: str, clip_index: int, job_dir: str, clips_
                              accent_color: str = "",
                              hindi_font_choice: str = "",
                              english_font_choice: str = "",
-                             show_title: bool = False) -> str:
+                             show_title: bool = False,
+                             src_dims: tuple = None) -> str:
     """Renders ONE finished 9:16 Short in a single ffmpeg pass.
 
     `raw_path` is the SOURCE video; we seek into it with -ss/-to instead of cutting a
@@ -1307,7 +1275,12 @@ def burn_subtitles_for_clip(raw_path: str, clip_index: int, job_dir: str, clips_
             # Figure out where the actual video band sits inside the 9:16 frame, so
             # "bottom"/"top" captions can pin to the edge of the footage (just below /
             # above it) rather than the very frame edge.
-            src_w, src_h = _probe_dimensions(raw_path, log)
+            # All clips seek into the SAME source video, so its dimensions are probed
+            # once by the caller and passed in — avoids an ffprobe spawn per clip.
+            if src_dims and src_dims[0] and src_dims[1]:
+                src_w, src_h = src_dims
+            else:
+                src_w, src_h = _probe_dimensions(raw_path, log)
             vbox = _video_box(src_w, src_h)
             if vbox:
                 log.log(f"     Video band: y {vbox[0]:.0f}–{vbox[1]:.0f} of {SHORTS_H} "
@@ -1337,22 +1310,31 @@ def burn_subtitles_for_clip(raw_path: str, clip_index: int, job_dir: str, clips_
                 vf = _build_render_filter(ass_path, fontsdir)
 
         # 4. SINGLE ffmpeg pass: seek into source (-ss/-to) + scale to 9:16 + (burn).
-        command = ["ffmpeg", "-y"]
         # Input-seek BEFORE -i is fast (keyframe seek); we re-encode anyway so accuracy
         # is preserved by -to being applied on the trimmed input.
-        if clip_start is not None and clip_end is not None:
-            command += ["-ss", f"{clip_start:.3f}", "-to", f"{clip_end:.3f}"]
-        command += [
-            "-i", raw_path,
-            "-vf", vf,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2",
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k",
-            final_output,
-        ]
-        log.log(f"     FFmpeg : {' '.join(command)}")
+        def _build_cmd(venc_args):
+            cmd = ["ffmpeg", "-y"]
+            if clip_start is not None and clip_end is not None:
+                cmd += ["-ss", f"{clip_start:.3f}", "-to", f"{clip_end:.3f}"]
+            cmd += ["-i", raw_path, "-vf", vf]
+            cmd += venc_args
+            cmd += ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", final_output]
+            return cmd
 
+        # Pick the fastest available encoder (NVENC -> AMF -> QSV -> libx264).
+        venc_args, enc_name = providers.select_video_encoder(log)
+        command = _build_cmd(venc_args)
+        log.log(f"     FFmpeg ({enc_name}): {' '.join(command)}")
         result = subprocess.run(command, capture_output=True, text=True)
+
+        # ROBUSTNESS: if a hardware encoder fails (driver/session limits/etc.), fall
+        # back to the always-available CPU encoder so a clip is NEVER lost to a GPU hiccup.
+        if result.returncode != 0 and enc_name != "cpu":
+            log.log(f"     HW encoder '{enc_name}' failed (rc={result.returncode}); "
+                    f"retrying with CPU libx264.\n     {result.stderr[-600:]}")
+            command = _build_cmd(providers.CPU_ENCODER_ARGS)
+            result = subprocess.run(command, capture_output=True, text=True)
+
         if result.returncode != 0:
             log.log(f"     FFMPEG STDERR:\n{result.stderr[-1500:]}")
             log.log(f"     FAILED (return code {result.returncode})")
@@ -1468,12 +1450,13 @@ def execute_subtitle_workflow(
                 status_callback("Rendering clean 9:16 clips (no subtitles)...")
         else:
             # Subtitle source engine:
-            #   "whisper" (DEFAULT) — reuse the full-video Whisper transcript by slicing
-            #                         it to each clip (free, no extra API, needs GROQ).
-            #   "deepgram"          — transcribe each SELECTED clip with Deepgram nova-3
-            #                         (paid; only used when SUBTITLE_ENGINE=deepgram AND a
-            #                          DEEPGRAM_API_KEY is set).
-            engine = os.environ.get("SUBTITLE_ENGINE", "whisper").lower()
+            #   "deepgram" (DEFAULT) — transcribe each SELECTED clip with Deepgram nova-3.
+            #                          Best Hindi/Hinglish word-level accuracy. Used when a
+            #                          DEEPGRAM_API_KEY is set; per-clip failures fall back
+            #                          to whisper-slice automatically so captions never blank.
+            #   "whisper"            — reuse the full-video Whisper transcript by slicing it
+            #                          to each clip (free, no extra API, needs GROQ).
+            engine = os.environ.get("SUBTITLE_ENGINE", "deepgram").lower()
             whisper_full = os.path.join(job_dir, "transcript_full.json")
             have_dg_key = bool((os.environ.get("DEEPGRAM_API_KEY") or "").strip())
             have_whisper = os.path.exists(whisper_full)
@@ -1505,11 +1488,20 @@ def execute_subtitle_workflow(
                 try:
                     if engine == "deepgram":
                         # Cut just this clip's AUDIO from the source, transcribe it.
-                        clip_audio = os.path.join(clips_dir, f"clip_{idx}_audio.mp3")
-                        _extract_clip_audio(rc["raw_path"], clip_audio, cs, ce, log)
-                        segs = _deepgram_transcribe(clip_audio, log).get("segments", [])
-                        try: os.remove(clip_audio)
-                        except OSError: pass
+                        try:
+                            clip_audio = os.path.join(clips_dir, f"clip_{idx}_audio.mp3")
+                            _extract_clip_audio(rc["raw_path"], clip_audio, cs, ce, log)
+                            segs = _deepgram_transcribe(clip_audio, log).get("segments", [])
+                            try: os.remove(clip_audio)
+                            except OSError: pass
+                        except Exception as dg_err:
+                            # ROBUSTNESS: a Deepgram 500/timeout on one clip must not blank
+                            # its captions — fall back to slicing the full Whisper transcript.
+                            log.log(f"   Clip {idx}: Deepgram failed ({dg_err}); "
+                                    f"falling back to whisper-slice")
+                            segs = []
+                        if not segs and os.path.exists(whisper_full) and cs is not None and ce is not None:
+                            segs = _slice_transcript(whisper_full, cs, ce).get("segments", [])
                     elif os.path.exists(whisper_full) and cs is not None and ce is not None:
                         segs = _slice_transcript(whisper_full, cs, ce).get("segments", [])
                 except Exception as e:
@@ -1555,17 +1547,33 @@ def execute_subtitle_workflow(
         # ── STAGE 5: parallel burn (single pass per clip, seek into source) ──
         log.section("STAGE 5 - PARALLEL RENDER (cut + scale + optional captions)")
         log.log(f"   Total clips: {len(raw_clips)}")
+
+        # Probe the SOURCE video's dimensions ONCE — every clip seeks into the same
+        # file, so a single ffprobe replaces one-per-clip.
+        src_video = manifest.get("video_path") or (raw_clips[0]["raw_path"] if raw_clips else None)
+        src_dims = _probe_dimensions(src_video, log) if src_video else (None, None)
+        log.log(f"   Source dimensions: {src_dims[0]}x{src_dims[1]}" if src_dims[0] else
+                "   Source dimensions: unknown (will probe per clip)")
+
+        # Decide which encoder we'll use so we can size the worker pool sensibly.
+        _venc_args, _enc_name = providers.select_video_encoder(log)
         _env_workers = os.environ.get("MAX_RENDER_WORKERS")
         if _env_workers:
             max_workers = max(1, int(_env_workers))
+        elif _enc_name != "cpu":
+            # Hardware encoders share ONE GPU encode block; a few parallel ffmpegs keep
+            # it fed (CPU still does libass + scaling) without thrashing the GPU session.
+            max_workers = max(1, min(4, len(raw_clips)))
         else:
             try:
                 import psutil
                 free_gb = psutil.virtual_memory().available / (1024 ** 3)
-                max_workers = max(1, min(os.cpu_count() or 2, int(free_gb // 1.5)))
+                cores = psutil.cpu_count(logical=False) or (os.cpu_count() or 2)
+                # Each CPU ffmpeg uses ~2 threads, so don't exceed physical cores.
+                max_workers = max(1, min(cores, int(free_gb // 1.5)))
             except Exception:
                 max_workers = 2   # safe default for low-RAM machines (e.g. 4GB WSL)
-        log.log(f"   Parallel workers: {max_workers}")
+        log.log(f"   Encoder: {_enc_name} | Parallel workers: {max_workers}")
 
         results = {}
         done_count = {"n": 0}
@@ -1587,6 +1595,7 @@ def execute_subtitle_workflow(
                 hindi_font_choice=hindi_font_choice,
                 english_font_choice=english_font_choice,
                 show_title=show_title,
+                src_dims=src_dims,
             )
             done_count["n"] += 1
             if status_callback:
