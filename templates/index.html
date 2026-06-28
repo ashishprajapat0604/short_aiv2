@@ -6,7 +6,7 @@
 <title>ShortsAI — Hindi clips, captioned</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@500;700;800&family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@500;700&family=Mukta:wght@700&family=Hind:wght@700&family=Rozha+One&family=Kalam:wght@700&family=Poppins:wght@700&family=Anton&family=Bebas+Neue&family=Archivo+Black&family=Fjalla+One&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@500;700;800&family=Inter:wght@400;500;600;700&family=Noto+Sans+Devanagari:wght@500;700&family=Mukta:wght@700&family=Hind:wght@700&family=Rozha+One&family=Kalam:wght@700&family=Baloo+2:wght@700&family=Laila:wght@700&family=Rajdhani:wght@700&family=Poppins:wght@700&family=Anton&family=Bebas+Neue&family=Archivo+Black&family=Fjalla+One&family=Oswald:wght@700&family=Montserrat:wght@700&family=Staatliches&family=Barlow+Condensed:wght@700&family=Righteous&display=swap" rel="stylesheet">
 <style>
 :root[data-theme="dark"]{
   --bg0:#150d15; --bg1:#1d1220; --bg2:#271a29;
@@ -149,7 +149,12 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 .d.d-bold_yellow{color:#ffe23a; text-transform:uppercase; text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000}
 .d.d-karaoke span{color:#fff; text-shadow:-1px -1px 0 #000,1px -1px 0 #000,-1px 1px 0 #000,1px 1px 0 #000}
 .d.d-karaoke .hot{color:#FFE600}
-.d.d-word_pop{color:#fff; text-transform:uppercase; font-size:18px; text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000}
+.d.d-neon{color:#00FFFF; text-transform:uppercase; -webkit-text-stroke:1.5px #fff; text-shadow:0 0 8px #00FFFF,0 0 16px #00FFFF}
+.d.d-retro{color:#fff; text-transform:uppercase; background:#FF00FF; padding:2px 8px; border-radius:2px}
+.d.d-shadow{color:#fff; text-shadow:3px 3px 7px rgba(0,0,0,1),1px 1px 2px rgba(0,0,0,.8); -webkit-text-stroke:.5px transparent}
+.d.d-fire{color:#FF6B00; text-transform:uppercase; text-shadow:-1.5px -1.5px 0 #8B0000,1.5px -1.5px 0 #8B0000,-1.5px 1.5px 0 #8B0000,1.5px 1.5px 0 #8B0000}
+.d.d-fade{color:#fff; text-shadow:-1.5px -1.5px 0 #000,1.5px -1.5px 0 #000,-1.5px 1.5px 0 #000,1.5px 1.5px 0 #000; opacity:.7; animation:fadepulse 2s ease-in-out infinite}
+@keyframes fadepulse{0%,100%{opacity:.55}50%{opacity:1}}
 
 .pos-picker{display:flex; gap:16px; align-items:center; flex-wrap:wrap}
 .pos-phone{position:relative; width:104px; height:185px; border-radius:14px; overflow:hidden; flex:0 0 auto; border:1px solid var(--hair); background:#000}
@@ -180,7 +185,7 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 .cap-stage .lb{position:absolute; left:0; right:0; height:13%; background:#000; z-index:1}
 .cap-stage .lb.t{top:0} .cap-stage .lb.b{bottom:0}
 .cap-text{position:absolute; left:7%; right:7%; z-index:2; text-align:center; font-weight:800; font-size:clamp(15px,4.4vw,19px); line-height:1.25; transition:all .25s ease}
-.cap-text.cs-bold_yellow,.cap-text.cs-word_pop{font-size:clamp(18px,5.4vw,24px)}
+.cap-text.cs-bold_yellow{font-size:clamp(18px,5.4vw,24px)}
 .pos-top .cap-text{top:4%} .pos-middle .cap-text{top:50%; transform:translateY(-50%)}
 .pos-bottom .cap-text{bottom:17%} .pos-below .cap-text{bottom:2.5%}
 .cap-stage.nocap .cap-text,.cap-stage.nocap .cap-title{display:none}
@@ -198,8 +203,11 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 .cs-bold_yellow{color:#ffe23a; text-transform:uppercase; text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000}
 .cs-karaoke span{color:#fff; text-transform:uppercase; text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000; transition:.2s}
 .cs-karaoke .kw-active{font-size:1.16em; display:inline-block}
-.cs-word_pop .wp{color:#fff; text-transform:uppercase; display:inline-block; text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000; animation:pop 1.6s ease-in-out infinite}
-@keyframes pop{0%,100%{transform:scale(.92)}50%{transform:scale(1.08)}}
+.cs-neon{color:#00FFFF; text-transform:uppercase; -webkit-text-stroke:1px #fff; text-shadow:0 0 8px #00FFFF,0 0 18px #00FFFF}
+.cs-retro{color:#fff; text-transform:uppercase; background:#FF00FF; padding:4px 12px; border-radius:2px; box-decoration-break:clone; -webkit-box-decoration-break:clone}
+.cs-shadow{color:#fff; text-shadow:3px 3px 8px rgba(0,0,0,1),1px 1px 3px rgba(0,0,0,.9)}
+.cs-fire{color:#FF6B00; text-transform:uppercase; text-shadow:-2px -2px 0 #8B0000,2px -2px 0 #8B0000,-2px 2px 0 #8B0000,2px 2px 0 #8B0000}
+.cs-fade{color:#fff; text-shadow:-2px -2px 0 #000,2px -2px 0 #000,-2px 2px 0 #000,2px 2px 0 #000; opacity:.75}
 .preview-cap{font-size:12px; color:var(--ink-faint); text-align:center; margin-top:11px; line-height:1.5}
 
 .gen-wrap{margin:6px 0 4px}
@@ -402,29 +410,41 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
             <div class="style-card" data-val="white_box" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-white_box">Aa</span></div><div class="style-name">White box</div></div>
             <div class="style-card" data-val="bold_yellow" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-bold_yellow">Aa</span></div><div class="style-name">Bold yellow</div></div>
             <div class="style-card" data-val="karaoke" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-karaoke"><span>A</span><span class="hot">a</span></span></div><div class="style-name">Karaoke</div></div>
-            <div class="style-card" data-val="word_pop" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-word_pop">Aa</span></div><div class="style-name">Word pop</div></div>
+            <div class="style-card" data-val="neon" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-neon">Aa</span></div><div class="style-name">Neon</div></div>
+            <div class="style-card" data-val="retro" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-retro">Aa</span></div><div class="style-name">Retro</div></div>
+            <div class="style-card" data-val="shadow" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-shadow">Aa</span></div><div class="style-name">Shadow</div></div>
+            <div class="style-card" data-val="fire" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-fire">Aa</span></div><div class="style-name">Fire</div></div>
+            <div class="style-card" data-val="fade" onclick="pickStyle(this)"><div class="style-demo"><span class="d d-fade">Aa</span></div><div class="style-name">Fade</div></div>
           </div>
         </div>
 
         <div class="cap-field" id="hindiFontField">
           <div class="cap-lbl">हिन्दी font</div>
           <div class="seg fontseg" id="segHFont">
-            <button class="seg-btn active" data-val="noto"  style="font-family:'Noto Sans Devanagari'" onclick="pickFont('hindi',this)">नमस्ते</button>
-            <button class="seg-btn" data-val="mukta" style="font-family:'Mukta'" onclick="pickFont('hindi',this)">मुक्त</button>
-            <button class="seg-btn" data-val="hind"  style="font-family:'Hind'" onclick="pickFont('hindi',this)">हिन्द</button>
-            <button class="seg-btn" data-val="rozha" style="font-family:'Rozha One'" onclick="pickFont('hindi',this)">रोज़ा</button>
-            <button class="seg-btn" data-val="kalam" style="font-family:'Kalam'" onclick="pickFont('hindi',this)">कलम</button>
+            <button class="seg-btn active" data-val="noto"     style="font-family:'Noto Sans Devanagari'" onclick="pickFont('hindi',this)">नमस्ते</button>
+            <button class="seg-btn" data-val="mukta"    style="font-family:'Mukta'" onclick="pickFont('hindi',this)">मुक्त</button>
+            <button class="seg-btn" data-val="hind"     style="font-family:'Hind'" onclick="pickFont('hindi',this)">हिन्द</button>
+            <button class="seg-btn" data-val="rozha"    style="font-family:'Rozha One'" onclick="pickFont('hindi',this)">रोज़ा</button>
+            <button class="seg-btn" data-val="kalam"    style="font-family:'Kalam'" onclick="pickFont('hindi',this)">कलम</button>
+            <button class="seg-btn" data-val="baloo"    style="font-family:'Baloo 2'" onclick="pickFont('hindi',this)">बालू</button>
+            <button class="seg-btn" data-val="laila"    style="font-family:'Laila'" onclick="pickFont('hindi',this)">लैला</button>
+            <button class="seg-btn" data-val="rajdhani" style="font-family:'Rajdhani'" onclick="pickFont('hindi',this)">राजधानी</button>
           </div>
         </div>
 
         <div class="cap-field" id="englishFontField" style="display:none">
           <div class="cap-lbl">English font</div>
           <div class="seg fontseg" id="segEFont">
-            <button class="seg-btn active" data-val="poppins" style="font-family:'Poppins'" onclick="pickFont('english',this)">Poppins</button>
-            <button class="seg-btn" data-val="anton"   style="font-family:'Anton'" onclick="pickFont('english',this)">Anton</button>
-            <button class="seg-btn" data-val="bebas"   style="font-family:'Bebas Neue'" onclick="pickFont('english',this)">Bebas</button>
-            <button class="seg-btn" data-val="archivo" style="font-family:'Archivo Black'" onclick="pickFont('english',this)">Archivo</button>
-            <button class="seg-btn" data-val="fjalla"  style="font-family:'Fjalla One'" onclick="pickFont('english',this)">Fjalla</button>
+            <button class="seg-btn active" data-val="poppins"     style="font-family:'Poppins'" onclick="pickFont('english',this)">Poppins</button>
+            <button class="seg-btn" data-val="anton"       style="font-family:'Anton'" onclick="pickFont('english',this)">Anton</button>
+            <button class="seg-btn" data-val="bebas"       style="font-family:'Bebas Neue'" onclick="pickFont('english',this)">Bebas</button>
+            <button class="seg-btn" data-val="archivo"     style="font-family:'Archivo Black'" onclick="pickFont('english',this)">Archivo</button>
+            <button class="seg-btn" data-val="fjalla"      style="font-family:'Fjalla One'" onclick="pickFont('english',this)">Fjalla</button>
+            <button class="seg-btn" data-val="oswald"      style="font-family:'Oswald'" onclick="pickFont('english',this)">Oswald</button>
+            <button class="seg-btn" data-val="montserrat"  style="font-family:'Montserrat'" onclick="pickFont('english',this)">Montserrat</button>
+            <button class="seg-btn" data-val="staatliches" style="font-family:'Staatliches'" onclick="pickFont('english',this)">Staatliches</button>
+            <button class="seg-btn" data-val="barlow"      style="font-family:'Barlow Condensed'" onclick="pickFont('english',this)">Barlow</button>
+            <button class="seg-btn" data-val="righteous"   style="font-family:'Righteous'" onclick="pickFont('english',this)">Righteous</button>
           </div>
         </div>
 
@@ -515,8 +535,8 @@ let capBurn=true, capLayout='single', capLang='hindi', capPos='bottom', capStyle
 let hindiFont='noto', englishFont='poppins';
 let videoQuality='best';
 let _deleteTimer=null, _lastStep=0;
-const HFONT={noto:'Noto Sans Devanagari',mukta:'Mukta',hind:'Hind',rozha:'Rozha One',kalam:'Kalam'};
-const EFONT={poppins:'Poppins',anton:'Anton',bebas:'Bebas Neue',archivo:'Archivo Black',fjalla:'Fjalla One'};
+const HFONT={noto:'Noto Sans Devanagari',mukta:'Mukta',hind:'Hind',rozha:'Rozha One',kalam:'Kalam',baloo:'Baloo 2',laila:'Laila',rajdhani:'Rajdhani'};
+const EFONT={poppins:'Poppins',anton:'Anton',bebas:'Bebas Neue',archivo:'Archivo Black',fjalla:'Fjalla One',oswald:'Oswald',montserrat:'Montserrat',staatliches:'Staatliches',barlow:'Barlow Condensed',righteous:'Righteous'};
 
 // ── Theme ──
 function applyTheme(t){
@@ -601,7 +621,7 @@ function pickStyle(card){
   document.querySelectorAll('#styleGrid .style-card').forEach(c=>c.classList.remove('active'));
   card.classList.add('active');
   capStyle=card.dataset.val;
-  document.getElementById('accentField').style.display=(capStyle==='karaoke'||capStyle==='word_pop')?'':'none';
+  document.getElementById('accentField').style.display=(capStyle==='karaoke')?'':'none';
   renderPreview();
 }
 
@@ -668,8 +688,6 @@ function renderPreview(){
     if(capStyle==='karaoke'){
       const hot=Math.min(2,words.length-1);
       html=words.map((w,i)=> i===hot?`<span class="kw-active" style="color:${capAccent}">${w}</span>`:`<span>${w}</span>`).join(' ');
-    } else if(capStyle==='word_pop'){
-      html=`<span class="wp">${words[Math.min(2,words.length-1)]}</span>`;
     } else { html=words.join(' '); }
     cap.innerHTML=html;
     cap.className='cap-text cs-'+capStyle;
@@ -709,7 +727,7 @@ function getOptions(){
     subtitle_language:capLang,
     subtitle_position:capPos,
     caption_style:capStyle,
-    caption_accent:(capStyle==='karaoke'||capStyle==='word_pop')?capAccent:'',
+    caption_accent:(capStyle==='karaoke')?capAccent:'',
     hindi_font:hindiFont,
     english_font:englishFont,
     show_title:document.getElementById('tog-title').classList.contains('on'),
@@ -719,7 +737,7 @@ function getOptions(){
 
 function captionSummary(opts){
   if(!opts.burn_subtitles) return 'no subtitles';
-  const st={outline:'outline',box:'box',white_box:'white box',bold_yellow:'bold',karaoke:'karaoke',word_pop:'word-pop'}[opts.caption_style]||opts.caption_style;
+  const st={outline:'outline',box:'box',white_box:'white box',bold_yellow:'bold',karaoke:'karaoke'}[opts.caption_style]||opts.caption_style;
   if(opts.subtitle_layout==='dual') return `हिन्दी ↑ · EN ↓ · ${st}`;
   const lang={hindi:'हिन्दी',english:'English',hinglish:'Hinglish'}[opts.subtitle_language]||opts.subtitle_language;
   const pos={top:'top',middle:'middle',bottom:'on-video',below:'below video'}[opts.subtitle_position]||opts.subtitle_position;

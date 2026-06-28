@@ -560,23 +560,48 @@ def _ass_escape(text: str) -> str:
 
 
 # Subtitle chunking target: 5-10 words per on-screen frame.
-_WORDS_PER_CUE_MIN = 5
-_WORDS_PER_CUE_MAX = 10
+_WORDS_PER_CUE_MIN = 2
+_WORDS_PER_CUE_MAX = 3
 
 
 def _chunk_word_cues(segments: list, lead_offset: float, clip_duration,
                      max_words: int = _WORDS_PER_CUE_MAX) -> list:
     """Group Devanagari words (with real timestamps) into cues of up to max_words,
     preferring to break at the end of a segment (natural pause). Each cue is timed
-    from its first word's start to its last word's end. Returns (start, end, text)."""
+    from its first word's start to its last word's end. Returns (start, end, text).
+
+    Fallback: when a segment has no word-level timestamps but has text, the segment
+    duration is divided evenly across its words so subtitles still appear."""
     cues = []
     bucket = []  # list of (start, end, word)
     for seg in segments:
         seg_words = [w for w in seg.get("words", [])
                      if (w.get("word") or "").strip() and w.get("start") is not None and w.get("end") is not None]
-        for w in seg_words:
-            bucket.append((max(0.0, w["start"] - lead_offset),
-                           max(0.0, w["end"] - lead_offset), (w["word"] or "").strip()))
+
+        # Fallback: no word timestamps — synthesise them from the segment span.
+        if not seg_words:
+            text = (seg.get("text") or "").strip()
+            if not text:
+                continue
+            s0 = max(0.0, float(seg.get("start", 0)) - lead_offset)
+            e0 = max(0.0, float(seg.get("end", 0)) - lead_offset)
+            if clip_duration is not None:
+                e0 = min(e0, clip_duration)
+            toks = text.split()
+            if toks and e0 > s0:
+                span = (e0 - s0) / len(toks)
+                seg_words = [(s0 + i * span, s0 + (i + 1) * span, t) for i, t in enumerate(toks)]
+            else:
+                continue
+
+        for item in seg_words:
+            if isinstance(item, tuple):
+                ws, we, word = item
+            else:
+                ws = max(0.0, item["start"] - lead_offset)
+                we = max(0.0, item["end"] - lead_offset)
+                word = (item["word"] or "").strip()
+            bucket.append((ws, we, word))
             if len(bucket) >= max_words:
                 cues.append(_flush_bucket(bucket, clip_duration)); bucket = []
         # Prefer a break at the segment boundary once we have a readable amount.
@@ -584,7 +609,14 @@ def _chunk_word_cues(segments: list, lead_offset: float, clip_duration,
             cues.append(_flush_bucket(bucket, clip_duration)); bucket = []
     if bucket:
         cues.append(_flush_bucket(bucket, clip_duration))
-    return [c for c in cues if c]
+    # Enforce no-overlap: each cue ends no later than the next cue starts.
+    valid = [c for c in cues if c]
+    for i in range(len(valid) - 1):
+        s, e, t = valid[i]
+        next_s = valid[i + 1][0]
+        if e > next_s:
+            valid[i] = (s, next_s, t)
+    return valid
 
 
 def _flush_bucket(bucket, clip_duration):
@@ -715,6 +747,9 @@ _BLACK = "&H00000000"
 _SHADOW_BACK = "&H64000000"   # translucent black drop shadow (outline style)
 _BOX_BACK    = "&HA0000000"   # mostly-opaque black box (box style)
 _WHITE_BOX_BACK = "&H80FFFFFF"  # 50% white / 50% transparent slab (white_box style; dark text)
+_ORANGE      = "&H0000A5FF"   # RGB FF A5 00 — vibrant orange (fire)
+_DARK_RED    = "&H000000CC"   # RGB CC 00 00 — deep red (fire outline)
+_MAGENTA_BOX = "&HA0FF00FF"   # 63% opaque magenta slab (retro box)
 
 # One reusable Style-row tail. Order matches the Format line below.
 _STYLE_FIELDS = "1,0,0,0,100,100,0,0,{bs},{ol},{sh},{al},{ml},{mr},{mv},1"
@@ -744,8 +779,9 @@ def _hex_to_ass(hexstr: str, default: str = _DEFAULT_ACCENT) -> str:
 # Trendy caption presets. Each bundles size, colours, border + an optional animation.
 #   anim: None      -> static text
 #         "karaoke" -> phrase stays on screen, the spoken word lights up (Hormozi look)
-#         "word"    -> ONE word at a time, scales/pops in (fast-cut Reels look)
-# Recognised names: outline, box, white_box, bold_yellow, karaoke, word_pop.
+#         "fade"    -> each cue fades in/out smoothly
+# Recognised names: outline, box, white_box, bold_yellow, karaoke,
+#                   neon, retro, shadow, fire, fade.
 def _style_preset(name: str, accent: str = _DEFAULT_ACCENT) -> dict:
     name = (name or "outline").lower()
     p = dict(fontsize=_SINGLE_FONTSIZE, primary=_WHITE, accent=accent,
@@ -761,16 +797,30 @@ def _style_preset(name: str, accent: str = _DEFAULT_ACCENT) -> dict:
         p.update(fontsize=66, primary=_YELLOW, outline=6, upper=True)
     elif name == "karaoke":
         p.update(fontsize=62, outline=5, upper=True, anim="karaoke")
-    elif name == "word_pop":
-        p.update(fontsize=86, outline=6, upper=True, anim="word")
+    elif name == "neon":
+        # Cyan text, thick white stroke — glowing neon look, uppercase
+        p.update(fontsize=64, primary=_CYAN, outline_colour=_WHITE, outline=4, shadow=3, upper=True, back=_BLACK)
+    elif name == "retro":
+        # White text on a magenta/pink opaque slab — TikTok retro aesthetic, uppercase
+        p.update(fontsize=60, primary=_WHITE, border=3, outline=8, shadow=0,
+                 back=_MAGENTA_BOX, outline_colour=_MAGENTA_BOX, upper=True)
+    elif name == "shadow":
+        # Cinematic: white text, large drop shadow, minimal outline (Netflix/film look)
+        p.update(fontsize=62, primary=_WHITE, outline=1, shadow=7, border=1, back="&HA0000000")
+    elif name == "fire":
+        # Orange text, dark-red thick outline, uppercase — high energy
+        p.update(fontsize=66, primary=_ORANGE, outline_colour=_DARK_RED, outline=6, shadow=2, upper=True, back=_BLACK)
+    elif name == "fade":
+        # Standard outline but each cue fades in and out smoothly
+        p.update(fontsize=60, outline=5, anim="fade")
     # "outline" == the default base
     return p
 
 
 # Styles that are static text (valid for the dual layout); animated ones fall back
 # to "outline" in dual since two animated tracks at once is visual noise.
-_STATIC_STYLES = ("outline", "box", "white_box", "bold_yellow")
-VALID_CAPTION_STYLES = ("outline", "box", "white_box", "bold_yellow", "karaoke", "word_pop")
+_STATIC_STYLES = ("outline", "box", "white_box", "bold_yellow", "neon", "retro", "shadow", "fire", "fade")
+VALID_CAPTION_STYLES = ("outline", "box", "white_box", "bold_yellow", "karaoke", "neon", "retro", "shadow", "fire", "fade")
 
 
 def _style_row(name: str, font: str, preset: dict, align: int, margin_v: int,
@@ -833,7 +883,7 @@ def _all_word_timings(segments: list, text_key: str, lead_offset: float, clip_du
     return words
 
 
-def _karaoke_events(segments, text_key, lead_offset, clip_duration, preset, group=6) -> list:
+def _karaoke_events(segments, text_key, lead_offset, clip_duration, preset, group=3) -> list:
     """Hormozi-style: a short phrase stays on screen and the currently spoken word is
     recoloured + slightly enlarged. Returns [(start, end, ass_text)]."""
     words = _all_word_timings(segments, text_key, lead_offset, clip_duration)
@@ -953,8 +1003,10 @@ def make_caption_ass(segments: list, ass_path: str,
 
         if preset["anim"] == "karaoke":
             ev = _karaoke_events(segments, text_key, lead_offset, clip_duration, preset)
-        elif preset["anim"] == "word":
-            ev = _wordpop_events(segments, text_key, lead_offset, clip_duration, preset)
+        elif preset["anim"] == "fade":
+            cues = _static_cues(segments, language, lead_offset, clip_duration)
+            ev = [(s, e, f'{{\\fad(120,80)}}{_ass_escape(t.upper() if preset["upper"] else t)}')
+                  for s, e, t in cues]
         else:
             cues = _static_cues(segments, language, lead_offset, clip_duration)
             ev = [(s, e, _ass_escape(t.upper() if preset["upper"] else t)) for s, e, t in cues]
@@ -1058,6 +1110,9 @@ _HINDI_FONT_CANDIDATES = [
     (os.path.join(BASE_DIR, "fonts", "NotoSansDevanagari", "full", "ttf", "NotoSansDevanagari-Bold.ttf"), "Noto Sans Devanagari"),
     (os.path.join(BASE_DIR, "fonts", "NotoSansDevanagari-Bold.ttf"), "Noto Sans Devanagari"),
     (os.path.join(BASE_DIR, "fonts", "NotoSansDevanagari-Regular.ttf"), "Noto Sans Devanagari"),
+    (os.path.join(BASE_DIR, "fonts", "Baloo2-Bold.ttf"), "Baloo 2"),
+    (os.path.join(BASE_DIR, "fonts", "Laila-Bold.ttf"), "Laila"),
+    (os.path.join(BASE_DIR, "fonts", "Rajdhani-Bold.ttf"), "Rajdhani"),
     ("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Bold.ttf", "Noto Sans Devanagari"),
     ("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf", "Noto Sans Devanagari"),
     ("/usr/share/fonts/truetype/lohit-devanagari/Lohit-Devanagari.ttf", "Lohit Devanagari"),
@@ -1065,6 +1120,11 @@ _HINDI_FONT_CANDIDATES = [
 ]
 _LATIN_FONT_CANDIDATES = [
     (os.path.join(BASE_DIR, "fonts", "Poppins-Bold.ttf"), "Poppins"),
+    (os.path.join(BASE_DIR, "fonts", "Oswald-Bold.ttf"), "Oswald"),
+    (os.path.join(BASE_DIR, "fonts", "Montserrat-Bold.ttf"), "Montserrat"),
+    (os.path.join(BASE_DIR, "fonts", "Staatliches-Regular.ttf"), "Staatliches"),
+    (os.path.join(BASE_DIR, "fonts", "BarlowCondensed-Bold.ttf"), "Barlow Condensed"),
+    (os.path.join(BASE_DIR, "fonts", "Righteous-Regular.ttf"), "Righteous"),
     ("/usr/share/fonts/truetype/google-fonts/Poppins-Bold.ttf", "Poppins"),
     ("/usr/share/fonts/truetype/poppins/Poppins-Bold.ttf", "Poppins"),
     ("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVu Sans"),
@@ -1095,18 +1155,26 @@ def _get_latin_font():
 # Download them with the helper in the README (fetch_fonts script). If a chosen
 # font file isn't present, we fall back to whatever Devanagari/Latin font we can find.
 HINDI_FONTS = {
-    "noto":  ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf"),
-    "mukta": ("Mukta",                "Mukta-Bold.ttf"),
-    "hind":  ("Hind",                 "Hind-Bold.ttf"),
-    "rozha": ("Rozha One",            "RozhaOne-Regular.ttf"),
-    "kalam": ("Kalam",                "Kalam-Bold.ttf"),
+    "noto":     ("Noto Sans Devanagari", "NotoSansDevanagari-Bold.ttf"),
+    "mukta":    ("Mukta",                "Mukta-Bold.ttf"),
+    "hind":     ("Hind",                 "Hind-Bold.ttf"),
+    "rozha":    ("Rozha One",            "RozhaOne-Regular.ttf"),
+    "kalam":    ("Kalam",                "Kalam-Bold.ttf"),
+    "baloo":    ("Baloo 2",              "Baloo2-Bold.ttf"),
+    "laila":    ("Laila",                "Laila-Bold.ttf"),
+    "rajdhani": ("Rajdhani",             "Rajdhani-Bold.ttf"),
 }
 ENGLISH_FONTS = {
-    "poppins": ("Poppins",       "Poppins-Bold.ttf"),
-    "anton":   ("Anton",         "Anton-Regular.ttf"),
-    "bebas":   ("Bebas Neue",    "BebasNeue-Regular.ttf"),
-    "archivo": ("Archivo Black", "ArchivoBlack-Regular.ttf"),
-    "fjalla":  ("Fjalla One",    "FjallaOne-Regular.ttf"),
+    "poppins":     ("Poppins",            "Poppins-Bold.ttf"),
+    "anton":       ("Anton",              "Anton-Regular.ttf"),
+    "bebas":       ("Bebas Neue",         "BebasNeue-Regular.ttf"),
+    "archivo":     ("Archivo Black",      "ArchivoBlack-Regular.ttf"),
+    "fjalla":      ("Fjalla One",         "FjallaOne-Regular.ttf"),
+    "oswald":      ("Oswald",             "Oswald-Bold.ttf"),
+    "montserrat":  ("Montserrat",         "Montserrat-Bold.ttf"),
+    "staatliches": ("Staatliches",        "Staatliches-Regular.ttf"),
+    "barlow":      ("Barlow Condensed",   "BarlowCondensed-Bold.ttf"),
+    "righteous":   ("Righteous",          "Righteous-Regular.ttf"),
 }
 VALID_HINDI_FONTS = tuple(HINDI_FONTS.keys())
 VALID_ENGLISH_FONTS = tuple(ENGLISH_FONTS.keys())
@@ -1575,9 +1643,9 @@ if __name__ == "__main__":
     parser.add_argument("--position", choices=["top", "middle", "bottom", "below"], default=None,
                         help="bottom = on the video; below = under the video (in the letterbox bar)")
     parser.add_argument("--style",
-                        choices=["outline", "box", "white_box", "bold_yellow", "karaoke", "word_pop"],
+                        choices=list(VALID_CAPTION_STYLES),
                         default=None,
-                        help="Caption look: outline, box, white_box, bold_yellow, karaoke, word_pop")
+                        help="Caption look: " + ", ".join(VALID_CAPTION_STYLES))
     parser.add_argument("--accent", default=None,
                         help="Accent colour for karaoke/word_pop active word, e.g. '#FFE600'")
     parser.add_argument("--title", action="store_true", default=None,

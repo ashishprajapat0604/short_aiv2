@@ -1,15 +1,47 @@
-#dependcies
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environment
+.venv/
 venv/
 env/
 
-#python cache
---pychace__
-*.pyc
+# Environment / secrets
 .env
-.venv
+cookies.txt
+
+# Downloaded fonts (run.py fetches these automatically)
+fonts/
+
+# Output clips and uploads (runtime data)
+output/
+uploads/
+
+# Video / audio files
 *.mp4
-*.raw
-test1/
-test_caption.py
+*.mkv
+*.avi
+*.mov
+*.webm
+*.mp3
+*.wav
+*.m4a
+
+# Subtitle / temp files
+*.ass
+*.srt
+*.vtt
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+
+# Misc leftovers
+node_modules/
 workflow-files.zip

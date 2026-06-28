@@ -4,16 +4,26 @@
 set -u
 mkdir -p fonts
 declare -A FONTS=(
+  # Hindi / Devanagari
   ["NotoSansDevanagari-Bold.ttf"]="https://github.com/notofonts/devanagari/raw/main/fonts/NotoSansDevanagari/hinted/ttf/NotoSansDevanagari-Bold.ttf"
   ["Mukta-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/mukta/Mukta-Bold.ttf"
   ["Hind-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/hind/Hind-Bold.ttf"
   ["RozhaOne-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/rozhaone/RozhaOne-Regular.ttf"
   ["Kalam-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/kalam/Kalam-Bold.ttf"
+  ["Baloo2-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/baloo2/Baloo2-Bold.ttf"
+  ["Laila-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/laila/Laila-Bold.ttf"
+  ["Rajdhani-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/rajdhani/Rajdhani-Bold.ttf"
+  # English / Latin
   ["Poppins-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/poppins/Poppins-Bold.ttf"
   ["Anton-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/anton/Anton-Regular.ttf"
   ["BebasNeue-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/bebasneue/BebasNeue-Regular.ttf"
   ["ArchivoBlack-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/archivoblack/ArchivoBlack-Regular.ttf"
   ["FjallaOne-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/fjallaone/FjallaOne-Regular.ttf"
+  ["Oswald-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/oswald/Oswald-Bold.ttf"
+  ["Montserrat-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/montserrat/Montserrat-Bold.ttf"
+  ["Staatliches-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/staatliches/Staatliches-Regular.ttf"
+  ["BarlowCondensed-Bold.ttf"]="https://github.com/google/fonts/raw/main/ofl/barlowcondensed/BarlowCondensed-Bold.ttf"
+  ["Righteous-Regular.ttf"]="https://github.com/google/fonts/raw/main/ofl/righteous/Righteous-Regular.ttf"
 )
 for name in "${!FONTS[@]}"; do
   dest="fonts/$name"
