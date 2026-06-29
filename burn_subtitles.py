@@ -134,7 +134,7 @@ def _deepgram_transcribe(audio_path: str, log: DiagnosticLog) -> dict:
     if not api_key:
         raise ValueError("DEEPGRAM_API_KEY is missing from environment!")
 
-    client = DeepgramClient()
+    client = DeepgramClient(api_key=api_key)
 
     with open(audio_path, "rb") as f:
         buffer_data = f.read()

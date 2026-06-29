@@ -197,18 +197,31 @@ def check_ytdlp():
         warn("yt-dlp not found in venv — YouTube downloads may fail (run after pip install)")
 
 # ── ffmpeg ─────────────────────────────────────────────────────────────────────
-def _has_libx264():
+# H.264 encoders the render pipeline can use, fastest (GPU) first. The pipeline
+# auto-detects the working one at render time (see providers.select_video_encoder),
+# so the toolchain is "ok" if ANY of these is present — NOT only libx264. A box that
+# renders with h264_amf / h264_nvenc must not be told to "reinstall ffmpeg".
+_H264_ENCODERS = ("h264_nvenc", "h264_amf", "h264_qsv", "libx264")
+
+def _ffmpeg_encoders_blob():
     try:
         result = subprocess.run(
-            ["ffmpeg", "-encoders"],
+            ["ffmpeg", "-hide_banner", "-encoders"],
             capture_output=True, text=True
         )
-        return "libx264" in (result.stdout + result.stderr)
+        return result.stdout + result.stderr
     except Exception:
-        return False
+        return ""
+
+def _has_libx264():
+    return "libx264" in _ffmpeg_encoders_blob()
+
+def _available_h264_encoders():
+    blob = _ffmpeg_encoders_blob()
+    return [e for e in _H264_ENCODERS if e in blob]
 
 def _ffmpeg_ok():
-    return have("ffmpeg") and have("ffprobe") and _has_libx264()
+    return have("ffmpeg") and have("ffprobe") and bool(_available_h264_encoders())
 
 def _rpm_fusion_installed():
     try:
@@ -576,41 +589,71 @@ def self_test():
         warn("    → Check DEEPGRAM_API_KEY in .env  |  leave it blank to disable")
 
     # 3 ── Subtitle engine ─────────────────────────────────────────────────────
-    info("Subtitle engine (ffmpeg ASS burn + libx264 encode) …")
+    info("Subtitle engine (ffmpeg ASS burn + H.264 encode) …")
     if not have("ffmpeg"):
         warn("  Subtitle engine  skipped — ffmpeg not found")
         warn("    → Run with --install-ffmpeg to fix")
         return
 
+    # Minimal per-encoder args for the 1-second smoke test (the real pipeline uses
+    # richer rate-control args — here we only need to confirm the encode succeeds).
+    _test_encoder_args = {
+        "h264_nvenc": ["-c:v", "h264_nvenc", "-preset", "p4"],
+        "h264_amf":   ["-c:v", "h264_amf", "-quality", "speed"],
+        "h264_qsv":   ["-c:v", "h264_qsv", "-preset", "faster"],
+        "libx264":    ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "35"],
+    }
+    # Mirror the render pipeline: actually test-encode each available encoder
+    # (GPU first) and accept the first that works. This is what stops an AMD/NVIDIA
+    # box without libx264 from being falsely told to "reinstall ffmpeg".
+    candidates = _available_h264_encoders() or ["libx264"]
+    last_err = ""
     try:
         with tempfile.TemporaryDirectory() as tmp:
             tmpdir   = Path(tmp)
             ass_file = tmpdir / "test.ass"
-            out_file = tmpdir / "out.mp4"
-
             ass_file.write_text(_ASS_TEST_CONTENT, encoding="utf-8")
 
-            result = subprocess.run(
-                [
-                    "ffmpeg", "-y", "-loglevel", "error",
-                    # synthetic 1-second 1080×1920 black source — no real input needed
-                    "-f", "lavfi", "-i",
-                    "color=c=black:size=1080x1920:rate=30:duration=1",
-                    "-vf", f"ass={ass_file}",            # burn the subtitle
-                    "-c:v", "libx264", "-preset", "ultrafast", "-crf", "35",
-                    "-t", "1", str(out_file),
-                ],
-                capture_output=True, text=True, timeout=30,
-            )
-            if result.returncode == 0 and out_file.exists() \
-                    and out_file.stat().st_size > 2_000:
-                size_kb = out_file.stat().st_size // 1024
-                ok(f"  Subtitle engine  OK  ({size_kb} KB test clip produced)")
-            else:
+            # Escape the subtitle path EXACTLY like the render pipeline
+            # (burn_subtitles._escape_ffmpeg_path): backslash->slash and escape ':'
+            # and "'". Without this, a Windows path (C:\Users\...) breaks ffmpeg's
+            # filtergraph parser and the test fails for EVERY encoder — which is what
+            # made Windows clients see the bogus "reinstall ffmpeg" message.
+            ass_filter = "subtitles='{}'".format(
+                str(ass_file).replace("\\", "/").replace("'", "\\'").replace(":", "\\:"))
+
+            for enc in candidates:
+                out_file = tmpdir / f"out_{enc}.mp4"
+                result = subprocess.run(
+                    [
+                        "ffmpeg", "-y", "-loglevel", "error",
+                        # synthetic 1-second 1080×1920 black source — no real input needed
+                        "-f", "lavfi", "-i",
+                        "color=c=black:size=1080x1920:rate=30:duration=1",
+                        "-vf", ass_filter,                  # burn the subtitle (escaped path)
+                        *_test_encoder_args.get(enc, ["-c:v", enc]),
+                        "-pix_fmt", "yuv420p", "-t", "1", str(out_file),
+                    ],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if result.returncode == 0 and out_file.exists() \
+                        and out_file.stat().st_size > 2_000:
+                    size_kb = out_file.stat().st_size // 1024
+                    ok(f"  Subtitle engine  OK  (encoder: {enc}, {size_kb} KB test clip)")
+                    break
                 lines = (result.stderr or "").strip().splitlines()
-                msg = lines[-1] if lines else "no output produced"
-                err(f"  Subtitle engine  FAILED — {msg}")
-                warn("    → Run with --install-ffmpeg to reinstall ffmpeg with libx264")
+                last_err = lines[-1] if lines else "no output produced"
+            else:
+                # Every available encoder failed — diagnose the ACTUAL cause instead
+                # of blaming libx264, which this box may not even use.
+                err(f"  Subtitle engine  FAILED — {last_err}")
+                low = last_err.lower()
+                if "ass" in low or "subtitle" in low or "libass" in low or "filter" in low:
+                    warn("    → ffmpeg build lacks libass (subtitle burn-in). Install a FULL ffmpeg build "
+                         "(Windows: gyan.dev 'ffmpeg-release-full').")
+                else:
+                    warn("    → No usable H.264 encoder. Install a FULL ffmpeg build "
+                         "(Windows: gyan.dev 'ffmpeg-release-full'; Linux: --install-ffmpeg).")
     except subprocess.TimeoutExpired:
         warn("  Subtitle engine  timed out (ffmpeg took > 30 s — machine may be overloaded)")
     except Exception as e:
@@ -624,7 +667,8 @@ def readiness_summary():
         if not have("ffmpeg"):
             issues.append("ffmpeg missing  →  run with --install-ffmpeg")
         else:
-            issues.append("ffmpeg has no libx264  →  run with --install-ffmpeg")
+            issues.append("ffmpeg has no usable H.264 encoder (nvenc/amf/qsv/libx264)  "
+                          "→  install a FULL ffmpeg build")
     fonts_present = sum(1 for n in FONT_URLS if (FONTS_DIR / n).exists())
     if fonts_present == 0:
         issues.append("no fonts in ./fonts/  →  run with --skip-fonts=false or bash fetch_fonts.sh")

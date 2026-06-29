@@ -15,7 +15,8 @@ python-dotenv>=1.0            # loads GROQ_API_KEY / DEEPGRAM_API_KEY from .env
 
 # AI / transcription APIs
 groq>=0.11                    # Whisper transcription + translation/transliteration/titles
-deepgram-sdk>=3.7             # per-clip transcription (nova-3); optional at runtime
+deepgram-sdk>=5,<8            # per-clip transcription (nova-3); v5+ API (listen.v1.media). 7.x no-arg
+                             # DeepgramClient() no longer reads DEEPGRAM_API_KEY — key is passed explicitly in code.
 
 # Robustness fallback providers (kick in automatically when Groq/Deepgram error out).
 google-generativeai>=0.8     # free-tier Gemini fallback for ALL text tasks (selection,

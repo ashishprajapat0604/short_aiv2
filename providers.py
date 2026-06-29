@@ -197,7 +197,7 @@ def _deepgram_transcribe(audio_path, language, log):
 
     try:
         _say(log, "  [transcribe] Deepgram nova-3")
-        client = DeepgramClient()
+        client = DeepgramClient(api_key=api_key)
         with open(audio_path, "rb") as f:
             buf = f.read()
         response = client.listen.v1.media.transcribe_file(
