@@ -113,6 +113,12 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 .opt.on .toggle-box::after,.burn-toggle.on .toggle-box::after{transform:translateX(16px)}
 .opt .ot{font-weight:600; font-size:14px}
 .opt .oss{font-size:11.5px; color:var(--ink-faint)}
+.best-mode{width:100%; margin-bottom:14px; align-items:flex-start}
+.best-mode .oss{margin-top:2px; line-height:1.4}
+.best-mode.on{border-color:var(--gold); background:color-mix(in srgb,var(--gold) 12%, transparent)}
+.best-mode.on .toggle-box{background:var(--gold)}
+.gem-tag{display:inline-block; font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  color:#2a0f18; background:var(--gold); padding:1px 7px; border-radius:999px; margin-left:6px; vertical-align:middle}
 
 .stepper{display:flex; align-items:center; gap:14px; margin-top:16px; flex-wrap:wrap}
 .stepper .sl{font-size:13.5px; font-weight:600; color:var(--ink-soft)}
@@ -360,12 +366,26 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
   <!-- ── 2 · WHAT TO FIND ── -->
   <div class="card">
     <div class="card-h"><div class="step-no">弐</div><h2>What should the AI look for?</h2></div>
-    <div class="opt-grid">
-      <label class="opt on" id="tog-viral" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Viral moments</div><div class="oss">Hooks that stop the scroll</div></div></label>
-      <label class="opt on" id="tog-emotional" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Emotional beats</div><div class="oss">Story &amp; feeling</div></div></label>
-      <label class="opt on" id="tog-key" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Key insights</div><div class="oss">The most useful takeaways</div></div></label>
-      <label class="opt" id="tog-trend" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Trend-friendly</div><div class="oss">Topical &amp; shareable</div></div></label>
+
+    <label class="opt best-mode" id="tog-best" onclick="toggleBestClips(this)">
+      <div class="toggle-box"></div>
+      <div>
+        <div class="ot">✨ Best clips only <span class="gem-tag">Gemini</span></div>
+        <div class="oss">Gemini 2.5 Pro reads the whole video at once and keeps only the strongest, non-repeating, on-trend moments — about one clip per 3 minutes of video.</div>
+      </div>
+    </label>
+
+    <div id="lookForBlock">
+      <div class="opt-grid">
+        <label class="opt on" id="tog-viral" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Viral moments</div><div class="oss">Hooks that stop the scroll</div></div></label>
+        <label class="opt on" id="tog-emotional" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Emotional beats</div><div class="oss">Story &amp; feeling</div></div></label>
+        <label class="opt on" id="tog-key" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Key insights</div><div class="oss">The most useful takeaways</div></div></label>
+        <label class="opt" id="tog-trend" onclick="toggleOpt(this)"><div class="toggle-box"></div><div><div class="ot">Trend-friendly</div><div class="oss">Topical &amp; shareable</div></div></label>
+      </div>
     </div>
+
+    <!-- Clip count stays usable in "Best clips only" mode — Gemini honours it,
+         clamped server-side to the video length / 2 ceiling. -->
     <div class="stepper">
       <span class="sl">Number of clips</span>
       <div class="step-ctrl" id="clipStepper" data-disabled="1">
@@ -373,8 +393,9 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
         <span class="cv" id="countVal">AUTO</span>
         <button id="countPlus" onclick="changeCount(1)" disabled>+</button>
       </div>
-      <label class="mini-toggle on" id="autoClipsToggle" onclick="toggleAutoClips(this)"><div class="toggle-box"></div><span>Auto (1 per minute)</span></label>
+      <label class="mini-toggle on" id="autoClipsToggle" onclick="toggleAutoClips(this)"><div class="toggle-box"></div><span id="autoClipsLabel">Auto (1 per minute)</span></label>
     </div>
+    <div class="modeinfo" id="bestCountHint" style="display:none"><span>✨</span><span>AUTO picks one clip per ~3 min of video. Set your own number to override — capped at one clip per 2 min so only genuinely strong moments are used.</span></div>
   </div>
 
   <!-- ── 3 · CAPTIONS ── -->
@@ -530,7 +551,7 @@ body{margin:0; font-family:"Inter",system-ui,sans-serif; color:var(--ink); backg
 <script>
 // ── State ──
 let currentMode='online', currentJobId=null;
-let autoClips=true, clipCount=15, autoDelete=false;
+let autoClips=true, clipCount=15, autoDelete=false, bestClipsOnly=false;
 let capBurn=true, capLayout='single', capLang='hindi', capPos='bottom', capStyle='outline', capAccent='#FFE600';
 let hindiFont='noto', englishFont='poppins';
 let videoQuality='best';
@@ -586,6 +607,22 @@ function pickQuality(btn){
 
 // ── Toggles ──
 function toggleOpt(el){ el.classList.toggle('on'); if(el.id==='tog-title') renderPreview(); }
+
+// "Best clips only" (Gemini): the manual look-for toggles no longer apply (Gemini
+// judges quality itself), but the clip count still does — AUTO targets one clip per
+// ~3 min, and a user-set number is honoured up to the length/2 server-side ceiling.
+function toggleBestClips(el){
+  el.classList.toggle('on');
+  bestClipsOnly=el.classList.contains('on');
+  document.getElementById('lookForBlock').classList.toggle('cap-disabled', bestClipsOnly);
+  document.getElementById('bestCountHint').style.display = bestClipsOnly ? 'flex' : 'none';
+  document.getElementById('autoClipsLabel').textContent =
+    bestClipsOnly ? 'Auto (1 per 3 minutes)' : 'Auto (1 per minute)';
+  // Re-clamp to the new step floor when switching modes (e.g. 5 -> stays valid).
+  clipCount=Math.max(countMin(),Math.min(60,clipCount));
+  if(!autoClips) document.getElementById('countVal').textContent=clipCount;
+  refreshStepBtns();
+}
 
 function pickFont(group,btn){
   btn.parentElement.querySelectorAll('.seg-btn').forEach(b=>b.classList.remove('active'));
@@ -703,13 +740,17 @@ function toggleAutoClips(el){
   else{ stepper.dataset.disabled='0'; val.textContent=clipCount; }
   refreshStepBtns();
 }
+// Best-clips mode deals in smaller counts, so step 1-by-1 from 1; the standard
+// pipeline keeps its coarser 5-by-5 steps.
+function countStep(){ return bestClipsOnly?1:5; }
+function countMin(){  return bestClipsOnly?1:5; }
 function changeCount(d){
   if(autoClips) return;
-  clipCount=Math.max(5,Math.min(60,clipCount+d*5));
+  clipCount=Math.max(countMin(),Math.min(60,clipCount+d*countStep()));
   document.getElementById('countVal').textContent=clipCount; refreshStepBtns();
 }
 function refreshStepBtns(){
-  document.getElementById('countMinus').disabled=autoClips||clipCount<=5;
+  document.getElementById('countMinus').disabled=autoClips||clipCount<=countMin();
   document.getElementById('countPlus').disabled =autoClips||clipCount>=60;
 }
 
@@ -720,6 +761,7 @@ function getOptions(){
     emotional:document.getElementById('tog-emotional').classList.contains('on'),
     key:document.getElementById('tog-key').classList.contains('on'),
     trend:document.getElementById('tog-trend').classList.contains('on'),
+    best_clips_only:bestClipsOnly,
     num_clips:autoClips?'auto':clipCount,
     min_clip_len:20, max_clip_len:40,
     burn_subtitles:capBurn,

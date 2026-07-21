@@ -16,6 +16,8 @@ python-dotenv>=1.0            # loads GROQ_API_KEY / DEEPGRAM_API_KEY from .env
 # AI / transcription APIs
 groq>=0.11                    # Whisper transcription + translation/transliteration/titles
 deepgram-sdk>=3.7             # per-clip transcription (nova-3); optional at runtime
+google-genai>=1.0             # "Best clips only" mode — Gemini reads full transcript to
+                              # pick the strongest, unique clips (needs GEMINI_API_KEY)
 
 # Video download
 yt-dlp>=2024.4.9              # YouTube / generic URL downloads (invoked as a CLI)

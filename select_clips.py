@@ -589,6 +589,110 @@ TRANSCRIPT PORTION:
 
 
 # ─────────────────────────────────────────────────────────────
+# "Best clips only" selection — Google Gemini (whole transcript, one call)
+# ─────────────────────────────────────────────────────────────
+# When the user flips on "Best clips only" mode, we hand the ENTIRE transcript to
+# a Google Gemini model in a single call. Gemini's large context window lets it
+# see the whole video at once, so it can pick only the strongest, genuinely unique
+# moments and globally avoid near-duplicate/overlapping picks — something the
+# chunked Groq path (which only ever sees one slice at a time) cannot guarantee.
+#
+# Configure via env (no code change needed):
+#   GEMINI_API_KEY / GOOGLE_API_KEY   (required to enable this mode)
+#   GEMINI_SELECTION_MODEL            (default gemini-2.5-flash)
+#   GEMINI_SELECTION_MODEL_FALLBACK   (default gemini-2.5-pro)
+GEMINI_SELECTION_MODEL          = os.environ.get("GEMINI_SELECTION_MODEL", "gemini-2.5-pro")
+GEMINI_SELECTION_MODEL_FALLBACK = os.environ.get("GEMINI_SELECTION_MODEL_FALLBACK", "gemini-2.5-flash")
+
+
+def _gemini_api_key() -> str:
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+
+
+def _strip_json_fence(raw: str) -> str:
+    """Gemini sometimes wraps JSON in a ```json ... ``` markdown fence even when
+    asked for raw JSON. Strip it so json.loads() doesn't choke."""
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+        if raw.rstrip().endswith("```"):
+            raw = raw.rstrip()[:-3]
+    return raw.strip()
+
+
+def select_highlights_gemini(segments: list, max_clips: int, min_len: float,
+                             max_len: float, log: DiagnosticLog) -> list:
+    """Ask Gemini for ONLY the best, unique, trend-worthy moments in the whole
+    transcript. Returns a list of raw {start, end, score, reason} (un-snapped),
+    or [] if the model/key is unavailable (caller then falls back to Groq)."""
+    api_key = _gemini_api_key()
+    if not api_key:
+        log.log("  [Best clips] GEMINI_API_KEY/GOOGLE_API_KEY missing — cannot use Gemini selector.")
+        return []
+    if not segments:
+        return []
+
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError:
+        log.error("  [Best clips] google-genai not installed. Run: pip install google-genai")
+        return []
+
+    transcript_text = "".join(
+        f"[{s['start']:.2f} - {s['end']:.2f}] {s.get('text','').strip()}\n" for s in segments
+    )
+
+    prompt = f"""You are a world-class short-form content strategist for Instagram Reels,
+YouTube Shorts and TikTok. You are given the FULL timestamped transcript of one video.
+
+Your job: select ONLY the very best standalone vertical clips — the moments most likely
+to go viral RIGHT NOW given current short-form trends (strong hooks, pattern interrupts,
+bold/controversial claims, emotional peaks, relatable takes, satisfying payoffs).
+
+STRICT RULES:
+1. Aim to return exactly {max_clips} clip(s) — the {max_clips} STRONGEST distinct
+   moments in the video. Only return fewer if the video genuinely lacks that many
+   strong moments — never pad with mediocre, repeated, or overlapping clips.
+2. EVERY CLIP MUST BE UNIQUE. No repeated, near-duplicate, or overlapping time ranges.
+   Two clips must not cover the same moment. Spread picks across the whole video.
+3. Each clip must be between {min_len:.0f} and {max_len:.0f} seconds long.
+4. HOOK in the first ~3 seconds; SELF-CONTAINED (makes sense with zero outside context);
+   builds to a clear payoff; and ENDS ON A COMPLETE THOUGHT (never mid-sentence).
+5. Use the EXACT timestamps (in seconds) shown in the transcript. Start a clip at the
+   beginning of a sentence.
+6. Score each clip 1-10 (10 = most viral). Only include clips you'd score >= 7.
+
+Output ONLY valid JSON, no prose, in exactly this shape:
+{{"clips": [{{"start": float, "end": float, "score": int, "reason": "hook + why it trends"}}]}}
+
+FULL TRANSCRIPT:
+{transcript_text}"""
+
+    client = genai.Client(api_key=api_key)
+    cfg = types.GenerateContentConfig(temperature=0.3, response_mime_type="application/json")
+
+    import time
+    for model in [GEMINI_SELECTION_MODEL, GEMINI_SELECTION_MODEL_FALLBACK]:
+        for attempt in range(1, 3):
+            try:
+                log.log(f"  [Best clips] Gemini selection: model={model}, attempt {attempt}/2 "
+                        f"({len(segments)} segments, max {max_clips} clips)")
+                resp = client.models.generate_content(model=model, contents=prompt, config=cfg)
+                parsed = json.loads(_strip_json_fence(getattr(resp, "text", "") or ""))
+                clips = parsed.get("clips", parsed.get("highlights", parsed)) \
+                    if isinstance(parsed, dict) else parsed
+                clips = clips if isinstance(clips, list) else []
+                log.log(f"  [Best clips] Gemini returned {len(clips)} candidate clip(s)")
+                return clips
+            except Exception as e:
+                log.log(f"  [Best clips] Gemini {model} attempt {attempt} failed: {e}")
+                time.sleep(2 * attempt)
+    log.error("  [Best clips] Gemini selection failed on all models/attempts.")
+    return []
+
+
+# ─────────────────────────────────────────────────────────────
 # Highlight Engine (entry point)
 # ─────────────────────────────────────────────────────────────
 
@@ -612,6 +716,84 @@ def get_ai_highlights(transcript_path: str, job_dir: str, log: DiagnosticLog,
     total_duration = (segments[-1]["end"] - segments[0]["start"]) if segments else 60.0
     minutes = max(1, round(total_duration / 60.0))
     log.log(f"  Total video duration: {total_duration:.2f}s (~{minutes} min)")
+
+    # ── "Best clips only" mode (Gemini) ────────────────────────────────────────
+    # Quality-gated selection: Gemini reads the WHOLE transcript at once and returns
+    # only genuinely strong, UNIQUE, non-overlapping, trend-worthy moments. No
+    # coverage padding is added — if only a few moments are worth clipping, we ship
+    # only those. Target count = video length / 3 (one clip per ~3 minutes), capped by
+    # the absolute safety ceiling.
+    best_only = bool(options.get("best_clips_only"))
+    if best_only:
+        # Per-clip length bounds (needed early for the Gemini prompt).
+        try:
+            b_min = float(options.get("min_clip_len", DEFAULT_MIN_CLIP_LEN))
+        except (TypeError, ValueError):
+            b_min = DEFAULT_MIN_CLIP_LEN
+        try:
+            b_max = float(options.get("max_clip_len", DEFAULT_MAX_CLIP_LEN))
+        except (TypeError, ValueError):
+            b_max = DEFAULT_MAX_CLIP_LEN
+        if b_max <= b_min:
+            b_min, b_max = DEFAULT_MIN_CLIP_LEN, DEFAULT_MAX_CLIP_LEN
+
+        # Clip count in this mode:
+        #   - "auto" (default): video length / 3 min (one clip per ~3 minutes).
+        #   - user-set number : honoured, but never above video length / 2 min — the
+        #     hard ceiling for this mode, so "best only" can't be padded into filler.
+        auto_target = max(1, round(total_duration / 180.0))   # length / 3
+        hard_cap    = max(1, round(total_duration / 120.0))   # length / 2
+        raw_best_nc = options.get("num_clips", "auto")
+        best_auto = bool(options.get("auto_clips")) or \
+            str(raw_best_nc).strip().lower() in ("", "auto", "0", "none")
+        if best_auto:
+            max_best = auto_target
+        else:
+            try:
+                max_best = int(raw_best_nc)
+            except (TypeError, ValueError):
+                max_best, best_auto = auto_target, True
+            if not best_auto:
+                if max_best > hard_cap:
+                    log.log(f"  [Best clips] Requested {max_best} clips exceeds the "
+                            f"length/2 ceiling — clamping to {hard_cap}.")
+                max_best = max(1, min(max_best, hard_cap))
+        max_best = min(max_best, _ABS_MAX_CLIPS)
+        log.log(f"  BEST CLIPS ONLY mode (Gemini): target {max_best} clips "
+                f"({'auto = length/3' if best_auto else 'user-set'}; "
+                f"auto={auto_target}, max={hard_cap} = length/2, ceiling {_ABS_MAX_CLIPS}) | "
+                f"length {b_min:.0f}-{b_max:.0f}s")
+
+        raw_picks = select_highlights_gemini(segments, max_best, b_min, b_max, log)
+
+        best_valid = []
+        for h in raw_picks:
+            try:
+                raw_s, raw_e = float(h.get("start", 0)), float(h.get("end", 0))
+            except (TypeError, ValueError):
+                continue
+            snapped_s, snapped_e = snap_to_sentence_boundaries(raw_s, raw_e, segments, b_min, b_max)
+            if snapped_e - snapped_s >= b_min and _distinct(snapped_s, snapped_e, best_valid):
+                best_valid.append({
+                    "start": snapped_s, "end": snapped_e,
+                    "score": int(h.get("score", 9)) if str(h.get("score", 9)).isdigit() else 9,
+                    "reason": h.get("reason", "Gemini best-clip pick"),
+                })
+
+        if best_valid:
+            best_valid = sorted(best_valid, key=lambda v: v.get("score", 0), reverse=True)[:max_best]
+            log.log(f"\n  Best-clips selection ({len(best_valid)} unique clips), "
+                    f"sorted by predicted performance:")
+            for i, v in enumerate(best_valid):
+                log.log(f"    Clip {i+1}: {v['start']:.2f}s -> {v['end']:.2f}s  "
+                        f"({v['end']-v['start']:.1f}s)  score={v['score']}  | {v['reason']}")
+            with open(highlights_path, "w", encoding="utf-8") as f:
+                json.dump(best_valid, f, indent=4, ensure_ascii=False)
+            return highlights_path, best_valid
+
+        # Gemini unavailable (no key/SDK) or returned nothing usable — don't fail the
+        # job; fall through to the standard Groq + coverage pipeline below.
+        log.log("  [Best clips] No usable Gemini picks — falling back to standard selection.")
 
     # How many clips to produce:
     #   - "auto" (default): one clip per minute of video (15-min video -> ~15 clips).
@@ -806,6 +988,9 @@ def execute_selection_workflow(
     if options is None:
         options = {"viral": True, "emotional": True, "key": True, "trend": False, "num_clips": 3}
     options.setdefault("num_clips", 3)
+    # "Best clips only" mode: route selection through Gemini for quality-gated,
+    # unique, trend-aware picks (no coverage padding). Off by default.
+    options.setdefault("best_clips_only", False)
     # Clip-length bounds (client requirement: 20-40s).
     options.setdefault("min_clip_len", DEFAULT_MIN_CLIP_LEN)
     options.setdefault("max_clip_len", DEFAULT_MAX_CLIP_LEN)
