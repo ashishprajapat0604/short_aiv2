@@ -170,22 +170,35 @@ def ensure_venv():
     return True
 
 # ── Python dependencies ────────────────────────────────────────────────────────
+def _reqs_fingerprint() -> str:
+    """Hash of requirements.txt, recorded in the install stamp."""
+    import hashlib
+    return hashlib.sha256(REQS.read_bytes()).hexdigest()[:16]
+
+
 def install_deps(force=False):
     if not REQS.exists():
         err(f"requirements.txt not found at {REQS}")
         sys.exit(1)
-    if STAMP.exists() and not force:
+    # The stamp stores WHICH requirements.txt was installed, not just "done". So
+    # when a dependency is added (e.g. google-genai for the Gemini best-clips mode),
+    # an existing .venv re-runs pip instead of silently skipping the new package.
+    fingerprint = _reqs_fingerprint()
+    if STAMP.exists() and not force and STAMP.read_text().strip() == fingerprint:
         ok("Python dependencies already installed  (--reinstall to refresh)")
         return
     vpy = str(venv_python())
-    info("Installing Python dependencies (first run may take a minute) …")
+    if STAMP.exists():
+        info("requirements.txt changed since last install — updating dependencies …")
+    else:
+        info("Installing Python dependencies (first run may take a minute) …")
     try:
         run_cmd([vpy, "-m", "pip", "install", "--upgrade", "pip", "--quiet"])
         run_cmd([vpy, "-m", "pip", "install", "-r", str(REQS)])
     except subprocess.CalledProcessError:
         err("pip install failed — check your internet connection and try again.")
         sys.exit(1)
-    STAMP.write_text("ok\n")
+    STAMP.write_text(fingerprint + "\n")
     ok("Python dependencies installed")
 
 def check_ytdlp():
@@ -442,17 +455,36 @@ def ensure_env():
             "# ShortsAI — fill in your API keys before processing videos\n"
             "GROQ_API_KEY=\n"
             "DEEPGRAM_API_KEY=\n"
+            "# Required only for 'Best clips only' mode (Gemini).\n"
+            "# Get one at https://aistudio.google.com/apikey\n"
+            "GEMINI_API_KEY=\n"
         )
         warn(".env created — add your GROQ_API_KEY before processing videos")
         return
-    has_groq = any(
-        ln.startswith("GROQ_API_KEY=") and ln.strip() != "GROQ_API_KEY="
-        for ln in env.read_text().splitlines()
-    )
-    if has_groq:
+
+    lines = env.read_text().splitlines()
+
+    def _is_set(name):
+        return any(ln.startswith(f"{name}=") and ln.strip() != f"{name}=" for ln in lines)
+
+    if _is_set("GROQ_API_KEY"):
         ok(".env — GROQ_API_KEY set")
     else:
         warn(".env found but GROQ_API_KEY is empty — add it before processing videos")
+
+    # Gemini is optional: without it the "Best clips only" toggle falls back to
+    # the standard Groq selector rather than failing, so this is a hint, not an error.
+    if _is_set("GEMINI_API_KEY"):
+        ok(".env — GEMINI_API_KEY set  ('Best clips only' mode enabled)")
+    else:
+        if not any(ln.startswith("GEMINI_API_KEY=") for ln in lines):
+            with env.open("a") as f:
+                f.write("\n# Required only for 'Best clips only' mode (Gemini).\n"
+                        "# Get one at https://aistudio.google.com/apikey\n"
+                        "GEMINI_API_KEY=\n")
+            info(".env — added a GEMINI_API_KEY placeholder")
+        warn(".env — GEMINI_API_KEY empty  "
+             "('Best clips only' mode will fall back to the standard selector)")
 
 # ── Self-test ─────────────────────────────────────────────────────────────────
 # Each _*_TEST_CODE snippet runs inside the venv so it can import installed packages.
@@ -473,6 +505,32 @@ try:
     whisper = [m.id for m in models.data if "whisper" in m.id.lower()]
     print("OK  ({} models, whisper: {})".format(
         len(models.data), ", ".join(whisper) if whisper else "none listed"))
+except Exception as e:
+    print("FAIL  {}".format(e)); sys.exit(1)
+"""
+
+_GEMINI_TEST_CODE = """\
+import os, sys
+try:
+    from dotenv import load_dotenv; load_dotenv()
+except ImportError:
+    pass
+key = (os.getenv("GEMINI_API_KEY", "") or os.getenv("GOOGLE_API_KEY", "")).strip()
+if not key:
+    print("NO_KEY"); sys.exit(2)
+try:
+    from google import genai
+except ImportError:
+    print("FAIL  google-genai not installed — run: python3 run.py --reinstall"); sys.exit(1)
+try:
+    # Bind the client to a name: models.list() returns a LAZY pager, and a
+    # temporary client gets garbage-collected (closing its transport) before
+    # the pager is iterated -> "Cannot send a request, as the client has been closed".
+    client = genai.Client(api_key=key)
+    models = [m.name for m in client.models.list()]
+    pro = [m for m in models if "2.5-pro" in m]
+    print("OK  ({} models, 2.5-pro: {})".format(
+        len(models), "yes" if pro else "not listed"))
 except Exception as e:
     print("FAIL  {}".format(e)); sys.exit(1)
 """
@@ -574,6 +632,18 @@ def self_test():
     else:
         warn(f"  Deepgram  INVALID — {msg}")
         warn("    → Check DEEPGRAM_API_KEY in .env  |  leave it blank to disable")
+
+    # 2b ─ Gemini API (optional — "Best clips only" mode) ──────────────────────
+    info("Gemini API key (optional — 'Best clips only' mode) …")
+    status, msg = _venv_run(_GEMINI_TEST_CODE, timeout=20)
+    if status is True:
+        ok(f"  Gemini  {msg}")
+    elif status is None:
+        ok("  Gemini  not configured  "
+           "(optional — 'Best clips only' falls back to the standard selector)")
+    else:
+        warn(f"  Gemini  INVALID — {msg}")
+        warn("    → Check GEMINI_API_KEY in .env  |  get a key at aistudio.google.com/apikey")
 
     # 3 ── Subtitle engine ─────────────────────────────────────────────────────
     info("Subtitle engine (ffmpeg ASS burn + libx264 encode) …")

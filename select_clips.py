@@ -111,9 +111,18 @@ def download_video(url: str, job_dir: str, log: DiagnosticLog, video_quality: st
     else:
         fmt = _ytdlp_format(video_quality)
         log.log(f"[Step 1] Downloading video via yt-dlp...  (quality={video_quality}, format={fmt})")
-        command = [
-            "yt-dlp",
-            "--cookies", "cookies.txt",
+        # cookies.txt is gitignored, so a fresh clone won't have one. Resolve it next
+        # to this file (not the cwd) and only pass --cookies when it actually exists —
+        # public videos download fine without it; age-restricted/members-only need it.
+        cookies_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cookies.txt")
+        command = ["yt-dlp"]
+        if os.path.exists(cookies_path):
+            command += ["--cookies", cookies_path]
+            log.log(f"         Using cookies: {cookies_path}")
+        else:
+            log.log("         No cookies.txt found — downloading without cookies "
+                    "(age-restricted / members-only videos may fail)")
+        command += [
             "-f", fmt,
             "--merge-output-format", "mp4",
             "-o", video_output_path,
